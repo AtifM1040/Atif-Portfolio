@@ -1,0 +1,27 @@
+{
+  "entities": {
+    "Project": {
+      "title": "Project",
+      "description": "Portfolio video project showcase item",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "videoUrl": { "type": "string" },
+        "thumbnail": { "type": "string" },
+        "tags": { "type": "array", "items": { "type": "string" } },
+        "sortOrder": { "type": "number" },
+        "isHero": { "type": "boolean" },
+        "category": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["title", "videoUrl"]
+    }
+  },
+  "firestore": {
+    "projects": {
+      "entity": "Project",
+      "description": "Collection of showcase video projects"
+    }
+  }
+}
