@@ -1,22 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { 
-  collection, 
-  getDocs, 
-  addDoc, 
-  updateDoc, 
-  deleteDoc, 
-  doc, 
-  query, 
-  orderBy, 
-  writeBatch 
-} from 'firebase/firestore';
-import { 
-  ref as storageRef, 
-  uploadBytes, 
-  getDownloadURL 
-} from 'firebase/storage';
-import { db, storage } from '../firebase';
+import { supabase } from '../supabase';
 import { Project } from '../types';
 import { PROJECTS } from '../constants';
 import { 
@@ -49,7 +33,7 @@ import {
 
 const ADMIN_PASSCODE = "ATIF2000";
 
-const categories = ["AI (Artificial Intelligence)", "Stop Scroll Ads", "Beauty Product Ads", "UGC / VSL"];
+const categories = ["AI (Artificial Intelligence)", "Stop scroll/UGC Ads"];
 
 const ProjectCard: React.FC<{ 
   project: Project; 
@@ -401,69 +385,82 @@ const Work: React.FC = () => {
     setIsLoading(true);
     setErrorMessage(null);
     try {
-      const projectsCol = collection(db, 'projects');
-      const q = query(projectsCol, orderBy('sortOrder', 'desc'));
-      const snapshot = await getDocs(q);
-      
-      if (snapshot.empty) {
-        // Seed default projects if Firestore is brand new
-        const batch = writeBatch(db);
-        const seeded: Project[] = [];
-        
+      const { data, error } = await supabase
+        .from('projects')
+        .select('*')
+        .order('sort_order', { ascending: false });
+
+      if (error) {
+        console.warn("Supabase fetch error or table not initialized yet:", error);
+        // Fallback gracefully to default constants if table hasn't been created yet
+        setProjects(PROJECTS);
+        const firstHero = PROJECTS.find(p => p.isHero);
+        if (firstHero) setActiveVideoId(firstHero.id);
+        return;
+      }
+
+      if (!data || data.length === 0) {
+        // Table exists but is empty, populate with default seed items into Supabase
         const seedList = PROJECTS.map((p, idx) => {
-          let cat = categories[1]; // "Stop Scroll Ads"
-          if (idx >= 2 && idx < 4) cat = categories[2]; // "Beauty Product Ads"
-          else if (idx >= 4 && idx < 6) cat = categories[3]; // "UGC / VSL"
-          else if (idx >= 6) cat = categories[0]; // "AI (Artificial Intelligence)"
-          
+          let cat = p.category || (idx >= 4 ? categories[1] : categories[0]);
+
           return {
             title: p.title,
             description: p.description,
-            videoUrl: p.videoUrl,
-            thumbnail: p.thumbnail,
+            video_url: p.videoUrl,
+            thumb_url: p.thumbnail,
             tags: p.tags,
-            sortOrder: PROJECTS.length - idx,
-            isHero: idx === 0,
-            category: cat,
-            createdAt: new Date().toISOString()
+            sort_order: PROJECTS.length - idx,
+            is_hero: p.isHero || false,
+            category: cat
           };
         });
 
-        for (const item of seedList) {
-          const newDocRef = doc(projectsCol);
-          batch.set(newDocRef, item);
-          seeded.push({
-            id: newDocRef.id,
-            ...item
-          });
+        const { data: inserted, error: insertErr } = await supabase
+          .from('projects')
+          .insert(seedList)
+          .select('*');
+
+        if (!insertErr && inserted && inserted.length > 0) {
+          const formatted = inserted.map((p: any) => ({
+            id: String(p.id),
+            title: p.title || '',
+            description: p.description || '',
+            videoUrl: p.video_url || '',
+            thumbnail: p.thumb_url || '',
+            tags: Array.isArray(p.tags) ? p.tags : [],
+            sortOrder: p.sort_order ?? 0,
+            isHero: p.is_hero || false,
+            category: p.category || categories[0]
+          }));
+          setProjects(formatted);
+          const firstHero = formatted.find(p => p.isHero);
+          if (firstHero) setActiveVideoId(firstHero.id);
+        } else {
+          setProjects(PROJECTS);
+          const firstHero = PROJECTS.find(p => p.isHero);
+          if (firstHero) setActiveVideoId(firstHero.id);
         }
-        await batch.commit();
-        setProjects(seeded);
-        const firstHero = seeded.find(p => p.isHero);
-        if (firstHero) setActiveVideoId(firstHero.id);
       } else {
-        const allProjects: Project[] = snapshot.docs.map(docSnap => {
-          const data = docSnap.data();
-          return {
-            id: docSnap.id,
-            title: data.title || '',
-            description: data.description || '',
-            videoUrl: data.videoUrl || data.video_url || '',
-            thumbnail: data.thumbnail || data.thumb_url || '',
-            tags: Array.isArray(data.tags) ? data.tags : [],
-            sortOrder: typeof data.sortOrder === 'number' ? data.sortOrder : (data.sort_order ?? 0),
-            isHero: data.isHero || data.is_hero || false,
-            category: data.category || categories[0]
-          };
-        });
+        const allProjects: Project[] = data.map((p: any) => ({
+          id: String(p.id),
+          title: p.title || '',
+          description: p.description || '',
+          videoUrl: p.video_url || '',
+          thumbnail: p.thumb_url || '',
+          tags: Array.isArray(p.tags) ? p.tags : [],
+          sortOrder: p.sort_order ?? 0,
+          isHero: p.is_hero || false,
+          category: p.category || categories[0]
+        }));
 
         setProjects(allProjects);
         const firstHero = allProjects.find(p => p.isHero);
         if (firstHero) setActiveVideoId(firstHero.id);
       }
     } catch (err: any) {
-      console.error("Firebase fetch error:", err);
-      setErrorMessage(err.message || 'Connection failed.');
+      console.error("Supabase fetch exception:", err);
+      setProjects(PROJECTS);
     } finally {
       setIsLoading(false);
     }
@@ -471,14 +468,17 @@ const Work: React.FC = () => {
 
   const saveOrderToDb = async (updatedProjects: Project[]) => {
     try {
-      const batch = writeBatch(db);
-      updatedProjects.forEach((p, idx) => {
-        const docRef = doc(db, 'projects', p.id);
-        batch.update(docRef, {
-          sortOrder: updatedProjects.length - idx
-        });
-      });
-      await batch.commit();
+      const updates = updatedProjects.map((p, idx) => ({
+        id: p.id,
+        sort_order: updatedProjects.length - idx
+      }));
+
+      for (const item of updates) {
+        await supabase
+          .from('projects')
+          .update({ sort_order: item.sort_order })
+          .eq('id', item.id);
+      }
     } catch (err) {
       console.error("Failed to save order:", err);
     }
@@ -530,10 +530,17 @@ const Work: React.FC = () => {
   const uploadToStorage = async (file: File | Blob, folder: string, originalName?: string) => {
     const fileName = originalName || (file instanceof File ? file.name : 'thumbnail.jpg');
     const path = `${folder}/${Date.now()}-${fileName.replace(/[^a-z0-9.]/gi, '_')}`;
-    const fileRef = storageRef(storage, path);
-    await uploadBytes(fileRef, file);
-    const downloadUrl = await getDownloadURL(fileRef);
-    return downloadUrl;
+    
+    const { error: uploadErr } = await supabase.storage
+      .from('videos')
+      .upload(path, file);
+
+    if (uploadErr) {
+      throw new Error(`STORAGE ERROR: ${uploadErr.message}. Make sure you created a public bucket named 'videos' in Supabase.`);
+    }
+
+    const { data } = supabase.storage.from('videos').getPublicUrl(path);
+    return data.publicUrl;
   };
 
   const handleAddProject = async (e: React.FormEvent) => {
@@ -550,24 +557,26 @@ const Work: React.FC = () => {
       const targetCategory = isChangingHero ? activeCategory : newProject.category;
 
       if (isChangingHero) {
-        // Unset previous hero for this category
-        const oldHeroes = projects.filter(p => p.category === targetCategory && p.isHero);
-        for (const oldH of oldHeroes) {
-          await updateDoc(doc(db, 'projects', oldH.id), { isHero: false });
-        }
+        // Unset previous hero for this category in Supabase
+        await supabase
+          .from('projects')
+          .update({ is_hero: false })
+          .eq('category', targetCategory)
+          .eq('is_hero', true);
       }
 
-      await addDoc(collection(db, 'projects'), {
+      const { error: insertError } = await supabase.from('projects').insert([{
         title: newProject.title,
         description: newProject.description,
-        videoUrl: vUrl,
-        thumbnail: tUrl,
+        video_url: vUrl,
+        thumb_url: tUrl,
         tags: newProject.tags.split(',').map(t => t.trim()).filter(Boolean),
-        sortOrder: maxSort + 1,
-        isHero: isChangingHero,
-        category: targetCategory,
-        createdAt: new Date().toISOString()
-      });
+        sort_order: maxSort + 1,
+        is_hero: isChangingHero,
+        category: targetCategory
+      }]);
+
+      if (insertError) throw insertError;
 
       await fetchProjects();
       setIsAdding(false);
@@ -583,7 +592,8 @@ const Work: React.FC = () => {
   const deleteProject = async (id: string) => {
     if (!confirm('Delete permanently?')) return;
     try {
-      await deleteDoc(doc(db, 'projects', id));
+      const { error } = await supabase.from('projects').delete().eq('id', id);
+      if (error) throw error;
       setProjects(prev => prev.filter(p => p.id !== id));
     } catch (err: any) {
       alert(`Delete failed: ${err.message}`);
@@ -594,13 +604,19 @@ const Work: React.FC = () => {
     try {
       setIsLoading(true);
       // Unset previous hero for this category
-      const categoryHeroes = projects.filter(p => p.category === category && p.isHero);
-      for (const h of categoryHeroes) {
-        await updateDoc(doc(db, 'projects', h.id), { isHero: false });
-      }
+      await supabase
+        .from('projects')
+        .update({ is_hero: false })
+        .eq('category', category)
+        .eq('is_hero', true);
 
       // Set the new hero
-      await updateDoc(doc(db, 'projects', id), { isHero: true });
+      const { error } = await supabase
+        .from('projects')
+        .update({ is_hero: true })
+        .eq('id', id);
+
+      if (error) throw error;
       await fetchProjects();
     } catch (err: any) {
       alert(`Set hero failed: ${err.message}`);
