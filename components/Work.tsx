@@ -40,11 +40,9 @@ const ProjectCard: React.FC<{
   autoPlay?: boolean;
   onDelete?: (id: string) => void; 
   isAdmin: boolean;
-  onMove?: (direction: 'up' | 'down' | 'left' | 'right') => void;
+  onMove?: (direction: 'left' | 'right') => void;
   isFirst?: boolean;
   isLast?: boolean;
-  canMoveUp?: boolean;
-  canMoveDown?: boolean;
   isHero?: boolean;
   onChangeHero?: (categoryId: string) => void;
   onSetHero?: (id: string, category: string) => void;
@@ -58,8 +56,6 @@ const ProjectCard: React.FC<{
   onMove, 
   isFirst = false, 
   isLast = false, 
-  canMoveUp = false, 
-  canMoveDown = false,
   isHero = false,
   onChangeHero,
   onSetHero,
@@ -158,42 +154,25 @@ const ProjectCard: React.FC<{
 
               {/* Admin Controls Overlay */}
               {isAdmin && !isHero && onDelete && onMove && (
-                <div className="absolute top-4 left-4 right-4 flex justify-between items-start z-20 opacity-0 group-hover:opacity-100 transition-opacity">
-                  <div className="grid grid-cols-3 gap-1 bg-black/60 backdrop-blur-md p-1.5 rounded-xl border border-white/10">
-                    <div />
-                    <button 
-                      onClick={(e) => { e.stopPropagation(); onMove('up'); }}
-                      disabled={!canMoveUp}
-                      className={`p-1.5 rounded-md transition-colors ${!canMoveUp ? 'text-zinc-600 cursor-not-allowed' : 'text-white hover:text-amber-400'}`}
-                      title="Move Up"
-                    >
-                      <ChevronUp size={14} />
-                    </button>
-                    <div />
-                    
+                <div className="absolute top-4 left-4 right-4 flex justify-between items-center z-20 opacity-0 group-hover:opacity-100 transition-opacity">
+                  {/* Left / Right Position Shifter */}
+                  <div className="flex items-center gap-1 bg-black/80 backdrop-blur-md p-1.5 rounded-xl border border-white/20 shadow-xl">
                     <button 
                       onClick={(e) => { e.stopPropagation(); onMove('left'); }}
                       disabled={isFirst}
-                      className={`p-1.5 rounded-md transition-colors ${isFirst ? 'text-zinc-600 cursor-not-allowed' : 'text-white hover:text-amber-400'}`}
-                      title="Move Left"
+                      className={`p-2 rounded-lg transition-all flex items-center justify-center ${isFirst ? 'text-zinc-600 cursor-not-allowed opacity-40' : 'text-white hover:bg-white/20 hover:text-amber-400 active:scale-95'}`}
+                      title={isFirst ? "First position" : "Move Left (Earlier)"}
                     >
-                      <ChevronLeft size={14} />
+                      <ChevronLeft size={16} />
                     </button>
-                    <button 
-                      onClick={(e) => { e.stopPropagation(); onMove('down'); }}
-                      disabled={!canMoveDown}
-                      className={`p-1.5 rounded-md transition-colors ${!canMoveDown ? 'text-zinc-600 cursor-not-allowed' : 'text-white hover:text-amber-400'}`}
-                      title="Move Down"
-                    >
-                      <ChevronDown size={14} />
-                    </button>
+                    <span className="text-[10px] font-mono text-zinc-400 px-1 select-none">MOVE</span>
                     <button 
                       onClick={(e) => { e.stopPropagation(); onMove('right'); }}
                       disabled={isLast}
-                      className={`p-1.5 rounded-md transition-colors ${isLast ? 'text-zinc-600 cursor-not-allowed' : 'text-white hover:text-amber-400'}`}
-                      title="Move Right"
+                      className={`p-2 rounded-lg transition-all flex items-center justify-center ${isLast ? 'text-zinc-600 cursor-not-allowed opacity-40' : 'text-white hover:bg-white/20 hover:text-amber-400 active:scale-95'}`}
+                      title={isLast ? "Last position" : "Move Right (Later)"}
                     >
-                      <ChevronRight size={14} />
+                      <ChevronRight size={16} />
                     </button>
                   </div>
                   
@@ -201,15 +180,15 @@ const ProjectCard: React.FC<{
                     {onSetHero && (
                       <button 
                         onClick={(e) => { e.stopPropagation(); onSetHero(project.id, project.category); }}
-                        className="p-2 rounded-lg bg-amber-500/20 backdrop-blur-md border border-amber-500/30 text-amber-500 hover:bg-amber-500 hover:text-black transition-all"
-                        title="Set as Hero Video"
+                        className="p-2 rounded-xl bg-amber-500/20 backdrop-blur-md border border-amber-500/30 text-amber-500 hover:bg-amber-500 hover:text-black transition-all shadow-lg"
+                        title="Set as Featured Hero Video"
                       >
                         <Star size={16} />
                       </button>
                     )}
                     <button 
                       onClick={(e) => { e.stopPropagation(); onDelete(project.id); }}
-                      className="p-2 rounded-lg bg-red-500/20 backdrop-blur-md border border-red-500/30 text-red-500 hover:bg-red-500 hover:text-white transition-all"
+                      className="p-2 rounded-xl bg-red-500/20 backdrop-blur-md border border-red-500/30 text-red-500 hover:bg-red-500 hover:text-white transition-all shadow-lg"
                       title="Delete Project"
                     >
                       <Trash2 size={16} />
@@ -466,41 +445,51 @@ const Work: React.FC = () => {
     }
   };
 
-  const saveOrderToDb = async (updatedProjects: Project[]) => {
-    try {
-      const updates = updatedProjects.map((p, idx) => ({
-        id: p.id,
-        sort_order: updatedProjects.length - idx
-      }));
+  const moveProjectWithinCategory = async (category: string, currentCategoryIndex: number, direction: 'left' | 'right') => {
+    // 1. Get all non-hero projects in this category in their current display order (sortOrder DESC)
+    const categoryOthers = projects
+      .filter(p => p.category === category && !p.isHero)
+      .sort((a, b) => (b.sortOrder || 0) - (a.sortOrder || 0));
 
-      for (const item of updates) {
+    const targetIndex = direction === 'left' ? currentCategoryIndex - 1 : currentCategoryIndex + 1;
+    if (targetIndex < 0 || targetIndex >= categoryOthers.length) return;
+
+    // Swap their places in the category array
+    const reorderedCategoryOthers = [...categoryOthers];
+    const temp = reorderedCategoryOthers[currentCategoryIndex];
+    reorderedCategoryOthers[currentCategoryIndex] = reorderedCategoryOthers[targetIndex];
+    reorderedCategoryOthers[targetIndex] = temp;
+
+    // Reassign sortOrder for this category's non-hero videos so order is preserved
+    // Higher index gets lower sortOrder
+    const baseSort = 1000;
+    const updatedWithNewSort = reorderedCategoryOthers.map((item, idx) => ({
+      ...item,
+      sortOrder: baseSort - idx
+    }));
+
+    // Update global state
+    const newGlobalProjects = projects.map(p => {
+      if (p.category === category && !p.isHero) {
+        const found = updatedWithNewSort.find(u => u.id === p.id);
+        return found || p;
+      }
+      return p;
+    });
+
+    setProjects(newGlobalProjects);
+
+    // Save newly assigned sort orders to Supabase
+    try {
+      for (const item of updatedWithNewSort) {
         await supabase
           .from('projects')
-          .update({ sort_order: item.sort_order })
+          .update({ sort_order: item.sortOrder })
           .eq('id', item.id);
       }
     } catch (err) {
-      console.error("Failed to save order:", err);
+      console.error("Failed to save reordered positions to database:", err);
     }
-  };
-
-  const moveProject = async (index: number, direction: 'up' | 'down' | 'left' | 'right') => {
-    const newProjects = [...projects];
-    let targetIndex = index;
-    
-    if (direction === 'left') targetIndex = index - 1;
-    else if (direction === 'right') targetIndex = index + 1;
-    else if (direction === 'up') targetIndex = index - 4;
-    else if (direction === 'down') targetIndex = index + 4;
-
-    if (targetIndex < 0 || targetIndex >= newProjects.length) return;
-    
-    const temp = newProjects[index];
-    newProjects[index] = newProjects[targetIndex];
-    newProjects[targetIndex] = temp;
-    
-    setProjects(newProjects);
-    await saveOrderToDb(newProjects);
   };
 
   const generateVideoThumbnail = (file: File): Promise<Blob> => {
@@ -690,11 +679,9 @@ const Work: React.FC = () => {
                     autoPlay={false}
                     onDelete={deleteProject} 
                     isAdmin={isAdmin} 
-                    onMove={(dir) => moveProject(projects.indexOf(project), dir)}
+                    onMove={(dir) => moveProjectWithinCategory(category, index, dir)}
                     isFirst={index === 0}
                     isLast={index === others.length - 1}
-                    canMoveUp={index >= 4}
-                    canMoveDown={index < others.length - 4}
                     activeId={activeVideoId}
                     onPlay={(id) => setActiveVideoId(id)}
                     onSetHero={handleSetHero}
